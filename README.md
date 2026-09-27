@@ -112,3 +112,34 @@ metric mà quên sửa `alerts/model.yml` thì alert sẽ im lặng chứ không
 
 `.github/workflows/ci.yml` chạy trên self-hosted runner: lint → test → build
 image + smoke test (chạy container thật, hỏi `/health` và `/metrics`) → summary.
+
+### Đã chạy thật
+
+Kiểm chứng bằng bộ đếm của chính Alertmanager, không phải chỉ nhìn log:
+
+```
+$ docker compose stop api
+
+t+20s  ApiDown=pending   telegram_notifications_total=1
+t+80s  ApiDown=firing    telegram_notifications_total=1
+t+92s  ApiDown=firing    telegram_notifications_total=2   <- tin nhắn đã đi
+
+$ docker compose start api    # alert tự hết, tin RESOLVED ra ở nhịp group_interval kế tiếp
+
+$ curl -s localhost:19093/metrics | grep telegram
+alertmanager_notifications_total{integration="telegram"}                          4
+alertmanager_notifications_failed_total{integration="telegram",reason="clientError"}  0
+alertmanager_notifications_failed_total{integration="telegram",reason="serverError"}  0
+alertmanager_notifications_failed_total{integration="telegram",reason="other"}        0
+```
+
+4 tin đã gửi, 0 tin lỗi: FIRING và RESOLVED cho cả alert thử lẫn `ApiDown` thật.
+
+Hai điều đáng nhớ từ lần chạy này:
+
+- `ApiDown` mất **80 giây** mới sang `firing`, không phải tức thì. `up == 0` bị
+  phát hiện ở giây thứ 20, rồi `for: 1m` bắt điều kiện phải giữ nguyên suốt một
+  phút. Đó chính là thứ ngăn một lần scrape hụt lẻ tẻ gọi bạn dậy lúc 3 giờ sáng.
+- Tin **RESOLVED không ra ngay** khi service sống lại. Alertmanager gom theo
+  `group_interval` (5m ở đây) chứ không bắn tức thì. Muốn biết sự cố đã hết lúc
+  nào thì nhìn `ApiDown` trong Prometheus, đừng chờ Telegram.

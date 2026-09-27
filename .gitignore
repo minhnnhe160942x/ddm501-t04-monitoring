@@ -6,3 +6,4 @@ models/*.joblib
 monitoring/alertmanager/secrets/bot_token
 models/model_card.json
 .DS_Store
+.env
