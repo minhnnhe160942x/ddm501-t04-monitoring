@@ -135,6 +135,13 @@ alertmanager_notifications_failed_total{integration="telegram",reason="other"}  
 
 4 tin đã gửi, 0 tin lỗi: FIRING và RESOLVED cho cả alert thử lẫn `ApiDown` thật.
 
+![Alert Telegram: FIRING và RESOLVED cho TelegramTest và ApiDown](docs/telegram-alerts.png)
+
+Bốn tin trên Telegram, khớp đúng bộ đếm. `ApiDown` firing lúc 16:09, resolved
+lúc 16:14. Phần nội dung tin nhắn lấy thẳng từ `annotations` trong
+`monitoring/prometheus/alerts/model.yml` -- không có gì viết tay.
+
+
 Hai điều đáng nhớ từ lần chạy này:
 
 - `ApiDown` mất **80 giây** mới sang `firing`, không phải tức thì. `up == 0` bị
