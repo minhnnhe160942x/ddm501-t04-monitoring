@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+models/*.joblib
+
+# Telegram bot token — không bao giờ commit
+monitoring/alertmanager/secrets/bot_token
+models/model_card.json

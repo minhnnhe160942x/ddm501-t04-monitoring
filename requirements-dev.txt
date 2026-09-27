@@ -1,0 +1,4 @@
+# Chỉ dùng cho CI và chạy test ở máy, không đi vào image production.
+-r requirements.txt
+pytest==8.3.4
+flake8==7.1.1

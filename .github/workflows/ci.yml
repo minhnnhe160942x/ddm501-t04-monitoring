@@ -1,0 +1,129 @@
+# CI cho Tutorial 04 -- service có instrument metric.
+#
+# Không dùng actions/setup-python: trên self-hosted runner macOS, script cài
+# của nó gọi `sudo installer -pkg`, mà job CI không có TTY để nhập mật khẩu.
+# Dùng python3 của máy + venv riêng cho mỗi job.
+
+name: CI — T04 monitoring
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  lint-and-format:
+    name: Code Quality Check
+    runs-on: self-hosted
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Verify Python version
+        run: |
+          which python3
+          python3 --version
+
+      - name: Install linting tools
+        run: |
+          python3 -m venv .venv
+          ./.venv/bin/python -m pip install --upgrade pip
+          ./.venv/bin/pip install flake8==7.1.1
+
+      - name: Run flake8 linter
+        run: ./.venv/bin/flake8 app/ scripts/ tests/ --max-line-length=120 --statistics
+
+  run-tests:
+    name: Run Unit Tests
+    runs-on: self-hosted
+    needs: lint-and-format
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          python3 -m venv .venv
+          ./.venv/bin/python -m pip install --upgrade pip
+          ./.venv/bin/pip install -r requirements-dev.txt
+
+      # Model là build artefact, giống hệt cái Dockerfile làm. Train ở đây để
+      # pickle khớp đúng bản scikit-learn vừa cài bên trên.
+      - name: Train model
+        run: ./.venv/bin/python scripts/train_model.py
+
+      - name: Run tests
+        run: ./.venv/bin/pytest tests/ -v
+
+  build-and-smoke:
+    name: Build Image & Smoke Test
+    runs-on: self-hosted
+    needs: run-tests
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      # Tag theo commit sha để biết image nào dựng từ commit nào, và để rollback.
+      - name: Build Docker image
+        run: |
+          docker build -t ddm501-t04:${{ github.sha }} -t ddm501-t04:latest .
+
+      # Build xong chưa chứng minh được gì. Chạy thử và hỏi nó vài câu.
+      # Port 18001 để không đụng stack đang chạy ở 18000.
+      - name: Start container
+        run: |
+          docker rm -f t04-smoke || true
+          docker run -d --name t04-smoke -p 18001:8000 ddm501-t04:${{ github.sha }}
+
+      - name: Wait until healthy
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fs http://127.0.0.1:18001/health > /dev/null; then
+              echo "up sau ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "container không phản hồi sau 30s"
+          docker logs t04-smoke
+          exit 1
+
+      # -f là bắt buộc: không có nó curl trả exit 0 cả khi server trả HTTP 500.
+      - name: Check /health reports a loaded model
+        run: |
+          curl -fs http://127.0.0.1:18001/health | tee /dev/stderr | grep -q '"model_loaded":true'
+
+      - name: Check /metrics exposes what the alert rules query
+        run: |
+          BODY=$(curl -fs http://127.0.0.1:18001/metrics)
+          for m in wdbc_predictions_total wdbc_errors_total \
+                   wdbc_prediction_latency_seconds_bucket \
+                   wdbc_model_loaded wdbc_model_info wdbc_malignant_share; do
+            echo "$BODY" | grep -q "$m" || { echo "thiếu metric $m"; exit 1; }
+            echo "  ok  $m"
+          done
+
+      - name: Stop container
+        if: always()
+        run: docker rm -f t04-smoke || true
+
+  build-summary:
+    name: Build Summary
+    runs-on: self-hosted
+    needs: [lint-and-format, run-tests, build-and-smoke]
+    if: always()
+    steps:
+      - name: Print success message
+        if: needs.build-and-smoke.result == 'success'
+        run: |
+          echo '================================'
+          echo ' CI PIPELINE PASSED!'
+          echo ' Image built and smoke-tested.'
+          echo '================================'
+
+      - name: Print failure message
+        if: needs.build-and-smoke.result != 'success'
+        run: |
+          echo ' CI PIPELINE FAILED!'
+          echo ' Check logs to identify errors.'

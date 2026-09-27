@@ -1,0 +1,45 @@
+# Prometheus chỉ ĐÁNH GIÁ rule; Alertmanager mới là thứ GỬI thông báo đi.
+# Nó cũng lo gom nhóm, chống lặp và im lặng khi bảo trì — những việc Prometheus
+# cố tình không làm.
+#
+# Token KHÔNG nằm trong file này. `bot_token_file` trỏ tới một file được mount
+# vào, và file đó đã bị gitignore.
+
+route:
+  receiver: telegram
+  # Gom alert cùng tên + cùng mức độ vào một tin nhắn thay vì bắn rời rạc.
+  group_by: [alertname, severity]
+  group_wait: 30s          # chờ thêm 30s xem có alert cùng nhóm nữa không
+  group_interval: 5m       # nhóm đã gửi rồi, có thành viên mới thì 5m sau mới báo tiếp
+  repeat_interval: 4h      # vẫn đang cháy thì 4h nhắc lại một lần
+  routes:
+    # Critical thì không chờ lâu và nhắc dày hơn.
+    - matchers: [severity="critical"]
+      receiver: telegram
+      group_wait: 10s
+      repeat_interval: 1h
+
+receivers:
+  - name: telegram
+    telegram_configs:
+      - send_resolved: true
+        bot_token_file: /etc/alertmanager/secrets/bot_token
+        # Đổi thành chat id thật của bạn. Lấy bằng cách nhắn cho bot một câu rồi gọi
+        #   https://api.telegram.org/bot<TOKEN>/getUpdates
+        # Chat nhóm có id âm, ví dụ -1001234567890.
+        chat_id: 123456789
+        parse_mode: HTML
+        message: |-
+          <b>{{ if eq .Status "firing" }}🔴 FIRING{{ else }}✅ RESOLVED{{ end }} · {{ .Alerts | len }}</b>
+          {{ range .Alerts }}
+          <b>{{ .Labels.alertname }}</b> [{{ .Labels.severity }}]
+          {{ .Annotations.summary }}
+          {{ .Annotations.description }}
+          {{ end }}
+
+# Đã báo ApiDown (service chết hẳn) thì đừng báo thêm ModelNotLoaded của chính
+# service đó — nguyên nhân gốc đã rõ, mấy cái sau chỉ là nhiễu.
+inhibit_rules:
+  - source_matchers: [alertname="ApiDown"]
+    target_matchers: [severity="warning"]
+    equal: [job]
