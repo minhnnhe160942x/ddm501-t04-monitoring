@@ -67,3 +67,48 @@ python scripts/traffic.py --drift 3.0         # shift every input by 3 sigma
 6. During the `--drift 3.0` run, which of the four dashboard panels moved and
    which did not? What kind of failure is that, and would a normal web-service
    alert have caught it?
+---
+
+## Alerting sang Telegram
+
+Prometheus chỉ *đánh giá* rule; nó không gửi thông báo. Việc đó là của
+**Alertmanager** — cùng với gom nhóm, chống lặp và im lặng khi bảo trì.
+
+| | URL |
+|---|---|
+| Alertmanager | <http://127.0.0.1:19093> |
+
+Bật:
+
+```bash
+# 1. @BotFather -> /newbot -> copy token
+echo '<TOKEN>' > monitoring/alertmanager/secrets/bot_token
+# 2. Nhắn cho bot một câu (nếu không getUpdates sẽ rỗng)
+# 3. Script tự tìm chat id, vá config, restart, bắn một alert thử
+./scripts/setup_telegram.sh
+```
+
+`bot_token` đã nằm trong `.gitignore`; config dùng `bot_token_file` nên không có
+secret nào trong repo. `chat_id` thì nằm trong `alertmanager.yml` — Alertmanager
+không có `chat_id_file`, nên sau khi chạy script file đó sẽ hiện ra là đã sửa.
+
+Xem thử alert chạy end-to-end:
+
+```bash
+docker compose stop api          # ApiDown: pending sau ~30s, firing sau 1m
+docker compose start api         # resolved
+```
+
+## Test và CI
+
+```bash
+python3 -m venv .venv && ./.venv/bin/pip install -r requirements-dev.txt
+./.venv/bin/flake8 app/ scripts/ tests/ --max-line-length=120
+./.venv/bin/pytest tests/ -v     # 13 test
+```
+
+Test phủ cả `/health`, `/predict` và **contract của metric** — vì đổi tên một
+metric mà quên sửa `alerts/model.yml` thì alert sẽ im lặng chứ không báo lỗi.
+
+`.github/workflows/ci.yml` chạy trên self-hosted runner: lint → test → build
+image + smoke test (chạy container thật, hỏi `/health` và `/metrics`) → summary.
